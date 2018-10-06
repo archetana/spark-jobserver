@@ -10,6 +10,7 @@ import spark.jobserver.util.SparkJobUtils
 case class SparkSessionContextLikeWrapper(spark: SparkSession) extends ContextLike {
   def sparkContext: SparkContext = spark.sparkContext
   def stop() {
+    spark.streams.active.map(_.stop())
     spark.stop()
   }
 }
