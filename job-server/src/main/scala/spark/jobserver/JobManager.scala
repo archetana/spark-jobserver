@@ -15,6 +15,7 @@ import spark.jobserver.io.{JobDAO, JobDAOActor}
 import scala.collection.JavaConverters._
 import scala.util.Try
 import scala.concurrent.duration.FiniteDuration
+import scala.concurrent.Await
 
 /**
  * The JobManager is the main entry point for the forked JVM process running an individual
@@ -105,7 +106,7 @@ object JobManager {
         // the driver process, that why we have to wait here.
         // Calling System.exit results in a failed YARN application result:
         // org.apache.spark.deploy.yarn.ApplicationMaster#runImpl() in Spark
-        system.awaitTermination
+        system.terminate().wait();
       } else {
         // Spark Standalone Cluster Mode:
         // We have to call System.exit(0) otherwise the driver process keeps running

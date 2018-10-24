@@ -1,6 +1,6 @@
 package spark.jobserver.common.akka.actor
 
-import akka.actor.{ActorRef, Terminated}
+import akka.actor.{ ActorRef, Terminated }
 import scala.collection.mutable.ArrayBuffer
 
 import spark.jobserver.common.akka.InstrumentedActor
@@ -41,7 +41,7 @@ abstract class Reaper extends InstrumentedActor {
 class ProductionReaper extends Reaper {
   def allSoulsReaped() {
     logger.warn("Shutting down actor system because all actors have terminated")
-    context.system.shutdown()
+    context.system.terminate()
   }
 }
 
