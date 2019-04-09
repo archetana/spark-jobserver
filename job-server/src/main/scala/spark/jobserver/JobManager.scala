@@ -1,17 +1,21 @@
 package spark.jobserver
 
+import java.io.InputStreamReader
+import java.nio.file.Files
+import java.util.concurrent.TimeUnit
+
 import akka.actor.{ActorSystem, AddressFromURIString, Props}
 import akka.cluster.Cluster
 import com.typesafe.config.{Config, ConfigFactory, ConfigValueFactory}
-import java.nio.file.Files
-import java.util.concurrent.TimeUnit
+import org.apache.commons.io.FileUtils
 import org.slf4j.LoggerFactory
-import scala.util.{Failure, Success, Try}
-import scala.concurrent.duration.FiniteDuration
-import spark.jobserver.common.akka.actor.Reaper.WatchMe
 import spark.jobserver.common.akka.actor.ProductionReaper
+import spark.jobserver.common.akka.actor.Reaper.WatchMe
 import spark.jobserver.io.{JobDAO, JobDAOActor}
-import spark.jobserver.util.{HadoopFSFacade, NetworkAddressFactory}
+import spark.jobserver.util.{HadoopFSFacade, NetworkAddressFactory, Utils}
+
+import scala.concurrent.duration.FiniteDuration
+import scala.util.{Failure, Success, Try}
 
 /**
  * The JobManager is the main entry point for the forked JVM process running an individual
@@ -51,6 +55,7 @@ object JobManager {
 
       logger.info("Cluster mode: Replacing spark.jobserver.sqldao.rootdir with container tmp dir.")
       val sqlDaoDir = Files.createTempDirectory("sqldao")
+      FileUtils.forceDeleteOnExit(sqlDaoDir.toFile)
       val sqlDaoDirConfig = ConfigValueFactory.fromAnyRef(sqlDaoDir.toAbsolutePath.toString)
       systemConfig.withValue("spark.jobserver.sqldao.rootdir", sqlDaoDirConfig)
                   .withoutPath("akka.remote.netty.tcp.port")
@@ -88,9 +93,12 @@ object JobManager {
   }
 
   private def getConfFromFS(path: String): Option[Config] = {
-    new HadoopFSFacade().get(path) match {
+    new HadoopFSFacade(defaultFS = "file:///").get(path) match {
       case Some(stream) =>
-        Try(ConfigFactory.parseReader(stream)) match {
+        // Since config contains characters, we convert the input stream
+        // to InputStreamReader.
+        val reader = new InputStreamReader(stream)
+        Try(Utils.usingResource(reader)(ConfigFactory.parseReader)) match {
           case Success(config) => Some(config)
           case Failure(t) =>
             logger.error(t.getMessage)
