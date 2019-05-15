@@ -57,7 +57,10 @@ object Dependencies {
     "org.flywaydb" % "flyway-core" % flyway
   )
 
-
+  lazy val zookeeperDeps = Seq(
+    "org.apache.curator" % "curator-framework" % curator excludeAll(excludeZookeeper, excludeGuava),
+    "org.apache.zookeeper" % "zookeeper" % zookeeper
+  )
 
   lazy val cassandraDeps = Seq(
     "com.datastax.spark" %% "spark-cassandra-connector" % cassandraConnector
@@ -79,7 +82,8 @@ object Dependencies {
   lazy val miscTestDeps = Seq(
     "org.apache.hadoop" % "hadoop-hdfs" % hadoop % Test classifier "tests",
     "org.apache.hadoop" % "hadoop-common" % hadoop % Test classifier "tests",
-    "org.apache.hadoop" % "hadoop-minicluster" % hadoop % Test
+    "org.apache.hadoop" % "hadoop-minicluster" % hadoop % Test,
+    "org.apache.curator" % "curator-test" % curatorTest % Test excludeAll(excludeGuava)
   )
 
   lazy val securityDeps = Seq(
