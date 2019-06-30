@@ -2,9 +2,12 @@
 <!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
 **Table of Contents**  *generated with [DocToc](https://github.com/thlorenz/doctoc)*
 
-- [Jar routes](#jar-routes)
-- [Context routes](#context-routes)
-- [Job routes](#job-routes)
+- [LocalClusterSupervisor (context-per-jvm=false)](#localclustersupervisor-context-per-jvmfalse)
+  - [Jar routes](#jar-routes)
+  - [Context routes](#context-routes)
+  - [Job routes](#job-routes)
+- [AkkaClusterSupervisor (context-per-jvm=true)](#akkaclustersupervisor-context-per-jvmtrue)
+  - [Context routes](#context-routes-1)
 
 <!-- END doctoc generated TOC please keep comment here to allow auto update -->
 
@@ -202,6 +205,45 @@ AkkaClusterSupervisor (context-per-jvm=true)
 
 Context routes
 ----------
+
+- Context create route
+
+        title POST /contexts
+
+        user->WebApi: POST /contexts/<contextName>
+        WebApi->AkkaClusterSupervisorActor: AddContext(contextName, config)
+        AkkaClusterSupervisorActor->JobDAOActor: GetContextInfoByName
+        JobDAOActor->AkkaClusterSupervisorActor: ContextResponse
+        opt context already there
+        AkkaClusterSupervisorActor->WebApi: ContextAlreadyExists
+        WebApi->user: 400 "Context <contextName> exists"
+        end
+        AkkaClusterSupervisorActor->ManagerLauncher: launcher.start()
+        opt Exception
+        AkkaClusterSupervisorActor->JobDAOActor: SaveContextInfo(Error)
+        AkkaClusterSupervisorActor->WebApi: ContextInitError
+        WebApi->user:  500 "CONTEXT INIT ERROR"
+        end
+        ManagerLauncher->JobManagerActor:initialize
+        AkkaClusterSupervisorActor->JobDAOActor: SaveContextInfo(Started)
+        ClusterDaemon->AkkaClusterSupervisorActor: MemberUp
+        AkkaClusterSupervisorActor->JobManagerActor: Identify
+        JobManagerActor->AkkaClusterSupervisorActor: ActorIdentity
+        AkkaClusterSupervisorActor->JobDAOActor: GetContextInfo
+        JobDAOActor->AkkaClusterSupervisorActor: ContextResponse
+        note over AkkaClusterSupervisorActor: Restart logic is contained here
+        AkkaClusterSupervisorActor->JobManagerActor: Initialize
+        JobManagerActor->SparkBackend: makeContext
+        JobManagerActor->AkkaClusterSupervisorActor: Initialized
+        opt InitError or other possible failures
+        AkkaClusterSupervisorActor->JobManagerActor: PoisonPill
+        AkkaClusterSupervisorActor->JobDAOActor: SaveContextInfo(Error)
+        AkkaClusterSupervisorActor->WebApi: ContextInitError
+        WebApi->user:  500 "CONTEXT INIT ERROR"
+        end
+        AkkaClusterSupervisorActor->JobDAOActor: SaveContextInfo(Running)
+        AkkaClusterSupervisorActor->WebApi: ContextInitialized
+        WebApi->user: 200 "Context initialized"
 
 - Context delete route (Normal flow)
 

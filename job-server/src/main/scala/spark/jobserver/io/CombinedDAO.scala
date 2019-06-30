@@ -119,9 +119,9 @@ class CombinedDAO(config: Config) extends JobDAO with FileCacher with YammerMetr
     metaDataDAO.getJobConfig(jobId)
   }
 
-  override def getLastUploadTimeAndType(name: String): Option[(DateTime, BinaryType)] = {
+  override def getBinaryInfo(name: String): Option[BinaryInfo] = {
     val binaryInfo = Await.result(metaDataDAO.getBinary(name), defaultAwaitTime).getOrElse(return None)
-    Some((binaryInfo.uploadTime, binaryInfo.binaryType))
+    Some(binaryInfo)
   }
 
   override def saveBinary(name: String,
@@ -235,5 +235,10 @@ class CombinedDAO(config: Config) extends JobDAO with FileCacher with YammerMetr
         logger.warn(s"Couldn't find meta data information for $name")
         ""
     }
+  }
+
+  override def getJobsByBinaryName(binName: String, statuses: Option[Seq[String]] = None):
+      Future[Seq[JobInfo]] = {
+    metaDataDAO.getJobsByBinaryName(binName, statuses)
   }
 }
