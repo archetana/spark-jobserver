@@ -19,6 +19,7 @@ object PythonTasks {
 
   def buildPythonTask(baseDirectory: File, version: String): Unit = {
     val cwd = workingDirectory(baseDirectory)
+	print("ext : " + ext)
     val exitCode = Process(Seq(cwd.getAbsolutePath + "/build." + ext,
       version, "setup.py"), cwd).!
     if(exitCode != 0) {
