@@ -11,7 +11,7 @@ import java.io.File
 import java.util.concurrent.{TimeUnit, TimeoutException}
 
 import spark.jobserver.io._
-import spark.jobserver.util.ContextReconnectFailedException
+import spark.jobserver.util.{ContextReconnectFailedException, DAOCleanup}
 import org.joda.time.DateTime
 import org.slf4j.LoggerFactory
 
@@ -21,6 +21,9 @@ import scala.concurrent.duration._
 import scala.util.{Failure, Success, Try}
 import scala.collection.mutable.ListBuffer
 import com.google.common.annotations.VisibleForTesting
+import spark.jobserver.io.zookeeper.AutoPurgeActor
+
+import scala.util.control.NonFatal
 
 /**
  * The Spark Job Server is a web service that allows users to submit and run Spark jobs, check status,
@@ -119,6 +122,9 @@ object JobServer {
     val dataManager = system.actorOf(Props(classOf[DataManagerActor], dataFileDAO), "data-manager")
     val binManager = system.actorOf(Props(classOf[BinaryManager], daoActor), "binary-manager")
 
+    startCleanupIfEnabled(config)
+    startAutoPurge(system, daoActor, config)
+
     // Add initial job JARs, if specified in configuration.
     storeInitialBinaries(config, binManager)
 
@@ -203,18 +209,21 @@ object JobServer {
     val updatedContextInfo = contextInfo.copy(endTime = Option(DateTime.now()),
         state = ContextStatus.Error, error = Some(ContextReconnectFailedException()))
     jobDaoActor ! JobDAOActor.SaveContextInfo(updatedContextInfo)
-    (jobDaoActor ? JobDAOActor.GetJobInfosByContextId(
-        contextInfo.id, Some(JobStatus.getNonFinalStates())))(timeout).onComplete {
-      case Success(JobDAOActor.JobInfos(jobInfos)) =>
-        jobInfos.foreach(jobInfo => {
-        jobDaoActor ! JobDAOActor.SaveJobInfo(jobInfo.copy(state = JobStatus.Error,
-            endTime = Some(DateTime.now()), error = Some(ErrorData(ContextReconnectFailedException()))))
-        })
-      case Failure(e: Exception) =>
-        logger.error(s"Exception occurred while fetching jobs for context (${contextInfo.id})", e)
-      case unexpectedMsg @ _ =>
-        logger.error(
-            s"$unexpectedMsg message received while fetching jobs for context (${contextInfo.id})")
+    try{
+      Await.ready((jobDaoActor ? JobDAOActor.GetJobInfosByContextId(
+          contextInfo.id, Some(JobStatus.getNonFinalStates())))(timeout), timeout.duration).value.get match {
+        case Success(JobDAOActor.JobInfos(jobInfos)) =>
+          jobInfos.foreach(jobInfo => {
+          jobDaoActor ! JobDAOActor.SaveJobInfo(jobInfo.copy(state = JobStatus.Error,
+              endTime = Some(DateTime.now()), error = Some(ErrorData(ContextReconnectFailedException()))))
+          })
+        case Failure(e: Exception) =>
+          logger.error(s"Exception occurred while fetching jobs for context (${contextInfo.id})", e)
+      }
+    } catch {
+      case _ : TimeoutException =>
+        logger.error(s"Fetching job infos for context ${contextInfo.id} timed out. "
+            + "Not updating jobs to error state.")
     }
   }
 
@@ -298,6 +307,47 @@ object JobServer {
     if (driverMode == "cluster" && superviseModeEnabled == true && akkaTcpPort == 0) {
       throw new InvalidConfiguration("Supervise mode requires akka.remote.netty.tcp.port to be hardcoded")
     }
+  }
+
+  private def startAutoPurge(system: ActorSystem, daoActor: ActorRef, config : Config) : Unit = {
+    val enabled = AutoPurgeActor.isEnabled(config)
+
+    if (enabled){
+      val age = config.getInt("spark.jobserver.zookeeperdao.autopurge_after_hours")
+      val actor = system.actorOf(AutoPurgeActor.props(config, daoActor, age))
+      val initialPurge = (actor ? AutoPurgeActor.PurgeOldData)(AutoPurgeActor.maxPurgeDuration)
+      Await.result(initialPurge, AutoPurgeActor.maxPurgeDuration) match {
+        case AutoPurgeActor.PurgeComplete => logger.info("Initial auto purge completed successfully.")
+        case _ => logger.error("Initial auto purge unsuccessful.")
+      }
+    }
+  }
+
+  private def startCleanupIfEnabled(config: Config): Unit = {
+    isCleanupEnabled(config) match {
+      case true =>
+        logger.info("Cleanup of dao is enabled. Instantiating the class.")
+        Try(doStartupCleanup(config)) match {
+          case Success(true) => logger.info("Cleaned the dao successfully.")
+          case Success(false) => logger.error("Dao cleanup failed.")
+          case Failure(e) => logger.error("Failed to cleanup", e)
+        }
+      case false => logger.info("Startup dao cleanup is disabled.")
+    }
+  }
+
+  @VisibleForTesting
+  def isCleanupEnabled(config: Config): Boolean = {
+    val daoClassProperty = "spark.jobserver.startup_dao_cleanup_class"
+    (config.hasPath(daoClassProperty) && config.getString(daoClassProperty) != "")
+  }
+
+  @VisibleForTesting
+  def doStartupCleanup(config: Config): Boolean = {
+    val daoCleanupClass = Class.forName(config.getString("spark.jobserver.startup_dao_cleanup_class"))
+    val ctor = daoCleanupClass.getDeclaredConstructor(Class.forName("com.typesafe.config.Config"))
+    val daoCleanup = ctor.newInstance(config).asInstanceOf[DAOCleanup]
+    daoCleanup.cleanup()
   }
 
   def main(args: Array[String]) {
