@@ -3,9 +3,7 @@ package spark.jobserver.python
 import java.io.File
 
 import com.typesafe.config.Config
-import org.apache.spark.api.java.JavaSparkContext
-import org.apache.spark.sql.{SQLContext, SparkSession}
-import org.apache.spark.sql.hive.HiveContext
+import org.apache.spark.sql.SparkSession
 import org.apache.spark.{SparkConf, SparkContext}
 import org.joda.time.DateTime
 import org.scalactic.{Bad, Good, Or}
@@ -141,7 +139,6 @@ trait DefaultContextLikeImplementations {
     logger.info(s"Python paths for context: ${pyPaths.mkString("[", ", ", "]")}")
     pyPaths
   }
-
   override lazy val pythonExecutable: String = config.getString("python.executable")
 
   override def setupTasks(): Unit = {
@@ -156,6 +153,10 @@ case class PythonSessionContextLikeWrapper(spark: SparkSession, contextConfig: C
   override val sparkContext: SparkContext = spark.sparkContext
   override val contextType = classOf[SparkSession].getCanonicalName
   override def stop() {
+    spark.streams.active.foreach(f => {
+      logger.info("Killing stream " + f.name )
+      f.stop()
+    })
     spark.stop()
   }
 }
